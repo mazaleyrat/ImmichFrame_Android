@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
+import android.media.MediaPlayer
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
@@ -89,9 +90,12 @@ class MainActivity : AppCompatActivity() {
     private var serverBaseUrl = ""
     private var serverAuthSecret = ""
     private var isPlayingVideo = false
+    // Bumped on every settings load so api/Asset responses from an earlier session are dropped
+    private var assetQueueGeneration = 0
     private var imageVisibilityBeforeVideo = Pair(View.GONE, View.GONE)
+    // Cleared once the first video frame renders; fires if playback never gets that far
     private val videoStallRunnable = Runnable {
-        if (isPlayingVideo && !videoView.isPlaying) {
+        if (isPlayingVideo) {
             Log.w("MainActivity", "Video did not start in time, skipping")
             onVideoFinished()
         }
@@ -405,11 +409,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refillAssetQueue() {
+        val generation = assetQueueGeneration
         apiService.getAssets().enqueue(object : Callback<List<Helpers.AssetSummary>> {
             override fun onResponse(
                 call: Call<List<Helpers.AssetSummary>>,
                 response: Response<List<Helpers.AssetSummary>>
             ) {
+                if (generation != assetQueueGeneration || useWebView) return
                 val assets = response.body().orEmpty()
                 if (response.isSuccessful && assets.isNotEmpty()) {
                     assetQueue.addAll(assets)
@@ -420,6 +426,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onFailure(call: Call<List<Helpers.AssetSummary>>, t: Throwable) {
+                if (generation != assetQueueGeneration || useWebView) return
                 Log.w("MainActivity", "Failed to load asset list: ${t.localizedMessage}")
                 getNextRandomImage()
             }
@@ -448,9 +455,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         videoView.setOnPreparedListener { player ->
-            handler.removeCallbacks(videoStallRunnable)
             player.setVolume(0f, 0f)
             videoView.start()
+        }
+        videoView.setOnInfoListener { _, what, _ ->
+            if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                handler.removeCallbacks(videoStallRunnable)
+            }
+            false
         }
         videoView.setOnCompletionListener { onVideoFinished() }
         videoView.setOnErrorListener { _, what, extra ->
@@ -513,7 +525,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startImageTimer() {
-        if (!isImageTimerRunning) {
+        // A playing video advances the slideshow itself when it ends
+        if (!isImageTimerRunning && !isPlayingVideo) {
             isImageTimerRunning = true
             handler.postDelayed(imageRunnable, (serverSettings.interval * 1000).toLong())
         }
@@ -647,6 +660,7 @@ class MainActivity : AppCompatActivity() {
         txtDateTime.visibility = View.GONE //enabled in onSettingsLoaded based on server settings
         stopVideo()
         assetQueue.clear()
+        assetQueueGeneration++
 
         if (activeTimes) {
             handler.removeCallbacks(activeCheckRunnable)
@@ -795,7 +809,8 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)
             dispatchKeyEvent(event)
         } else {
-            val safePreviousImage = previousImage
+            // During a video, the last image shown is currentImage, not previousImage
+            val safePreviousImage = if (isPlayingVideo) currentImage else previousImage
             if (safePreviousImage != null) {
                 stopVideo()
                 stopImageTimer()
