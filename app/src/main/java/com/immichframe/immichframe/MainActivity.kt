@@ -92,6 +92,8 @@ class MainActivity : AppCompatActivity() {
     private var isPlayingVideo = false
     // Bumped on every settings load so api/Asset responses from an earlier session are dropped
     private var assetQueueGeneration = 0
+    // Bumped when a video starts so image decodes still running in showImage() are dropped
+    private var imageRenderGeneration = 0
     private var imageVisibilityBeforeVideo = Pair(View.GONE, View.GONE)
     // Cleared once the first video frame renders; fires if playback never gets that far
     private val videoStallRunnable = Runnable {
@@ -232,6 +234,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
+        val renderGeneration = imageRenderGeneration
         CoroutineScope(Dispatchers.IO).launch {
             //get the window size
             val decorView = window.decorView
@@ -271,6 +274,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
+                if (renderGeneration != imageRenderGeneration) return@withContext
                 updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse)
             }
         }
@@ -437,6 +441,7 @@ class MainActivity : AppCompatActivity() {
         stopImageTimer()
         zoomAnimator?.cancel()
         isPlayingVideo = true
+        imageRenderGeneration++
 
         // The SurfaceView clears only the video's own rect, so hide the images around it
         imageVisibilityBeforeVideo = Pair(imageView1.visibility, imageView2.visibility)
