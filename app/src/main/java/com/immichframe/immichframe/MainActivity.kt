@@ -235,6 +235,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
         val renderGeneration = imageRenderGeneration
+        // Snapshot on the main thread: playVideo() may clear portraitCache while decoding
+        val cachedPortrait = portraitCache
         CoroutineScope(Dispatchers.IO).launch {
             //get the window size
             val decorView = window.decorView
@@ -248,9 +250,9 @@ class MainActivity : AppCompatActivity() {
 
             val isPortrait = randomBitmap.height > randomBitmap.width
             if (isPortrait && serverSettings.layout == "splitview") {
-                if (portraitCache != null) {
+                if (cachedPortrait != null) {
                     var decodedPortraitImageBitmap =
-                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64)
+                        Helpers.decodeBitmapFromBytes(cachedPortrait.randomImageBase64)
                     decodedPortraitImageBitmap =
                         Helpers.reduceBitmapQuality(decodedPortraitImageBitmap, maxSize)
                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
@@ -265,8 +267,13 @@ class MainActivity : AppCompatActivity() {
 
                     decodedPortraitImageBitmap.recycle()
                 } else {
-                    portraitCache = imageResponse
-                    getNextRandomImage()
+                    // On the main thread, like playVideo(), so a video can't start in between
+                    withContext(Dispatchers.Main) {
+                        if (renderGeneration == imageRenderGeneration) {
+                            portraitCache = imageResponse
+                            getNextRandomImage()
+                        }
+                    }
                     return@launch
                 }
             } else {
@@ -275,7 +282,7 @@ class MainActivity : AppCompatActivity() {
 
             withContext(Dispatchers.Main) {
                 if (renderGeneration != imageRenderGeneration) return@withContext
-                updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse)
+                updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse, cachedPortrait)
             }
         }
     }
@@ -284,7 +291,8 @@ class MainActivity : AppCompatActivity() {
         finalImage: Bitmap,
         thumbHashBitmap: Bitmap,
         isMerged: Boolean,
-        imageResponse: Helpers.ImageResponse
+        imageResponse: Helpers.ImageResponse,
+        mergedPortrait: Helpers.ImageResponse?
     ) {
         val imageViewOld = if (isShowingFirst) imageView1 else imageView2
         val imageViewNew = if (isShowingFirst) imageView2 else imageView1
@@ -323,17 +331,17 @@ class MainActivity : AppCompatActivity() {
         // Toggle active ImageView
         isShowingFirst = !isShowingFirst
 
-        if (isMerged) {
+        if (isMerged && mergedPortrait != null) {
             val mergedPhotoDate =
-                if (portraitCache!!.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
-                    "${portraitCache!!.photoDate} | ${imageResponse.photoDate}"
+                if (mergedPortrait.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
+                    "${mergedPortrait.photoDate} | ${imageResponse.photoDate}"
                 } else {
                     ""
                 }
 
             val mergedImageLocation =
-                if (portraitCache!!.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
-                    "${portraitCache!!.imageLocation} | ${imageResponse.imageLocation}"
+                if (mergedPortrait.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
+                    "${mergedPortrait.imageLocation} | ${imageResponse.imageLocation}"
                 } else {
                     ""
                 }
@@ -442,6 +450,8 @@ class MainActivity : AppCompatActivity() {
         zoomAnimator?.cancel()
         isPlayingVideo = true
         imageRenderGeneration++
+        // Don't pair a pre-video portrait with whatever comes after the video
+        portraitCache = null
 
         // The SurfaceView clears only the video's own rect, so hide the images around it
         imageVisibilityBeforeVideo = Pair(imageView1.visibility, imageView2.visibility)
