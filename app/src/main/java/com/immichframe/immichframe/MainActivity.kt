@@ -281,7 +281,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
-                if (renderGeneration != imageRenderGeneration) return@withContext
+                if (renderGeneration != imageRenderGeneration) {
+                    // Never attached to a view, so safe to free right away
+                    randomBitmap.recycle()
+                    thumbHashBitmap.recycle()
+                    return@withContext
+                }
                 updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse, cachedPortrait)
             }
         }
