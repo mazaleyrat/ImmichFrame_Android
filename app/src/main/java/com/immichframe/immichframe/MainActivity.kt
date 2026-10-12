@@ -500,6 +500,8 @@ class MainActivity : AppCompatActivity() {
                 if (response.isSuccessful) {
                     val imageResponse = response.body()
                     if (imageResponse != null) {
+                        // A video started while this request was in flight; it was never shown
+                        if (isPlayingVideo) return
                         previousImage = currentImage
                         currentImage = imageResponse
                         showImage(imageResponse)
